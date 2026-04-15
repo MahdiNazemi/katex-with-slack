@@ -5,6 +5,28 @@ Renders LaTeX math formulas in Slack using the KaTeX library.
 Forked from https://github.com/sophiehuiberts/katex-with-slack
 
 
+Installation
+------------
+
+Clone or download this repository, then load the folder as an unpacked
+extension in your browser:
+
+Firefox:
+  1. Go to about:debugging#/runtime/this-firefox
+  2. Click "Load Temporary Add-on..."
+  3. Select manifest.json from this folder
+  Note: temporary add-ons are removed when Firefox restarts.
+  For a permanent install, submit to addons.mozilla.org.
+
+Chrome:
+  1. Go to chrome://extensions
+  2. Enable "Developer mode" (top right toggle)
+  3. Click "Load unpacked"
+  4. Select this folder
+
+After loading, open Slack in a new tab (or hard-refresh an existing one).
+
+
 Delimiters
 ----------
 
