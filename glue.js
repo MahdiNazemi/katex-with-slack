@@ -9,7 +9,9 @@ var classesToRender = [
 	"c-message__content",
 	"c-message__content--feature_sonic_inputs",
 	"c-message_kit__text",
-	"c-message_kit__blocks"
+	"c-message_kit__blocks",
+	// Forwarded/shared messages
+	"c-message_attachment__text"
 ];
 
 var delimitersA = [

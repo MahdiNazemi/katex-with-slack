@@ -28,7 +28,7 @@
   "permissions": [
     "storage"
   ],
-  "version": "1.0.3",
+  "version": "1.0.4",
   "icons": {
     "32": "icon32.png",
     "48": "icon48.png",
