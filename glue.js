@@ -55,16 +55,14 @@ refreshOptions();
 
 // --- Truncation handling ---
 //
-// KaTeX replaces text nodes with <span> elements. Slack's Block Kit
-// truncates long messages with a "See more" button. Clicking it triggers
-// React reconciliation which fails on the KaTeX-modified DOM.
+// KaTeX replaces text nodes with <span> elements. When Slack collapses
+// or expands truncated content it triggers React reconciliation, which
+// fails on KaTeX-modified DOM.
 //
-// Fix: delay rendering by 300ms on first encounter to let Slack finish
-// layout evaluation and add the "See more" button. Then check: if the
-// button exists and is not expanded, skip rendering. After the user
-// clicks "See more" and Slack expands, content changes, MutationObserver
-// fires, we go through the delay again, but now the button is either
-// gone or has aria-expanded="true", so we render.
+// Block Kit "See more": delay rendering until expanded (aria-expanded="true").
+//
+// Attachment "Show more/less": render freely when expanded, but undo KaTeX
+// just before "Show less" is clicked so React collapses a clean DOM.
 
 // Timestamp of when each element was first seen. We wait 300ms before
 // rendering to let Slack finish layout and add "See more" if needed.
@@ -73,16 +71,51 @@ refreshOptions();
 var firstSeenAt = new WeakMap();
 var RENDER_DELAY_MS = 300;
 
-// Check if a non-expanded truncation button exists in the element
+// Check if a non-expanded Block Kit truncation button exists in the element
 function isTruncated(el) {
 	if (!el || !el.querySelector) return false;
-	var btn = el.querySelector(
-		'button[data-qa="block_kit_text_truncation"],' +
-		'button.c-message_attachment__text_expander'
-	);
+	var btn = el.querySelector('button[data-qa="block_kit_text_truncation"]');
 	if (!btn) return false;
 	return btn.getAttribute('aria-expanded') !== 'true';
 }
+
+// Surgically undo KaTeX rendering by replacing .katex spans with the
+// original LaTeX text from the embedded <annotation> tag.
+function undoKatexInElement(el) {
+	var displays = el.querySelectorAll('.katex-display');
+	for (var i = displays.length - 1; i >= 0; i--) {
+		var ann = displays[i].querySelector('annotation[encoding="application/x-tex"]');
+		if (ann) {
+			var parent = displays[i].parentNode;
+			if (parent) parent.replaceChild(
+				document.createTextNode('\\[' + ann.textContent + '\\]'), displays[i]);
+		}
+	}
+	var inlines = el.querySelectorAll('.katex');
+	for (var i = inlines.length - 1; i >= 0; i--) {
+		if (inlines[i].closest('.katex-display')) continue;
+		var ann = inlines[i].querySelector('annotation[encoding="application/x-tex"]');
+		if (ann) {
+			var parent = inlines[i].parentNode;
+			if (parent) parent.replaceChild(
+				document.createTextNode('\\(' + ann.textContent + '\\)'), inlines[i]);
+		}
+	}
+}
+
+// Capture "Show less" clicks on attachments before Slack processes them.
+// Undo KaTeX so React collapses a clean DOM, then MutationObserver fires
+// and we re-render the collapsed (truncated) state normally.
+document.addEventListener('click', function(e) {
+	var btn = e.target && e.target.closest &&
+	          e.target.closest('button.c-message_attachment__text_expander');
+	if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+	var attachmentText = btn.closest('.c-message_attachment__text');
+	if (attachmentText && attachmentText.querySelector('.katex')) {
+		undoKatexInElement(attachmentText);
+		processedContent.delete(attachmentText);
+	}
+}, true); // capture phase: runs before Slack's handler
 
 function processElement(el, options) {
 	var currentContent = el.textContent || "";
