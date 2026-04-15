@@ -1,29 +1,45 @@
 {
-   "content_scripts": [ {
-      "matches": [ "*://*.slack.com/*" ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.slack.com/*"
+      ],
       "all_frames": true,
-      "css": [ "katex.css" ],
-      "js": [ "katex.js", "auto-render.js", "glue.js" ]
-   } ],
-   "manifest_version": 2,
-   "name": "LaTeX in Slack",
-   "short_name": "latex-slack",
-   "description": "Render LaTeX in Slack chat.",
-   "author": "Sophie Huiberts",
-   "homepage_url": "https://github.com/sophiehuiberts/katex-with-slack",
-   "options_ui": {
-      "page": "options.html",
-      "open_in_tab": false
-   },
-   "browser_specific_settings" : {
-       "gecko": {
-           "id": "{344e6ebd-84a3-422d-8460-b954d1bc6bf8}"
-       }
-   },
-   "permissions": [ "storage" ],
-   "version": "1.0.1",
-   "icons": { "32": "icon32.png",
-              "48": "icon48.png",
-             "128": "icon128.png" },
-    "web_accessible_resources": [ "fonts/*" ]
+      "run_at": "document_idle",
+      "css": [
+        "katex.css"
+      ],
+      "js": [
+        "katex.js",
+        "auto-render.js",
+        "glue.js"
+      ]
+    }
+  ],
+  "manifest_version": 2,
+  "name": "LaTeX in Slack",
+  "short_name": "latex-slack",
+  "description": "Render LaTeX in Slack chat.",
+  "author": "Mahdi Nazemi",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "permissions": [
+    "storage"
+  ],
+  "version": "1.0.3",
+  "icons": {
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "web_accessible_resources": [
+    "fonts/*"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{d982df24-e6e9-43ea-904e-6adef6e289cc}"
+    }
+  }
 }
