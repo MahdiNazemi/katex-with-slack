@@ -53,30 +53,130 @@ if (chrome.storage.onChanged) {
 
 refreshOptions();
 
+// --- Shadow DOM rendering for Block Kit truncatable blocks ---
+//
+// Problem: KaTeX's renderMathInElement splits React-managed text nodes into
+// fragments. React's fiber holds stateNode refs to the original text nodes.
+// When Slack reconciles a "See more/See less" toggle, React calls removeChild
+// on stale refs → NotFoundError. All monkey-patch approaches cause duplicate
+// content (Martijn Hols, React #11538: "makes things worse, not better").
+//
+// Solution for c-message_attachment__text (Block Kit): Shadow DOM.
+// Attach a shadow root to the inner text span (span[dir="auto"]) — NOT to the
+// whole c-message_attachment__text which also contains the "See more" button.
+// The shadow root renders KaTeX from a clone of the light DOM. React reconciles
+// the light DOM (untouched), "See more/See less" works cleanly, and the shadow
+// DOM updates whenever the light DOM changes.
+//
+// For all other element classes (p-rich_text_block etc.), renderMathInElement
+// is used directly — those don't have the same See more/See less React conflict.
+
+// Extension-internal URL for katex.css, to inject into each shadow root.
+var katexCssUrl = null;
+try {
+	if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+		katexCssUrl = chrome.runtime.getURL('katex.css');
+	}
+} catch (e) {}
+
+// WeakMap: textSpan → {shadow, cssInjected}
+var shadowRoots = new WeakMap();
+
+// Find the text-content span inside a c-message_attachment__text element.
+// Each Block Kit section block has exactly one c-message_attachment__text with
+// exactly one span[dir="auto"] text container. Multi-block messages have
+// multiple c-message_attachment__text siblings, each processed independently
+// by processAllMessages — there is no case of multiple text spans per attachment.
+// The "See more" button is a sibling span OUTSIDE span[dir="auto"], so it stays
+// in the light DOM and remains fully interactive after we shadow the text span.
+function findTextSpan(el) {
+	// Block Kit plain text: .p-plain_text_element > span[dir]
+	// Block Kit mrkdwn: .p-mrkdwn_element > span[dir]
+	return el.querySelector('span[dir="auto"]') ||
+	       el.querySelector('span[dir]') ||
+	       null;
+}
+
+// Get or create shadow root for the text span.
+// Returns {shadow, fresh} where fresh=true means just created.
+function getShadowRoot(textSpan) {
+	if (shadowRoots.has(textSpan)) {
+		return {shadow: shadowRoots.get(textSpan).shadow, fresh: false};
+	}
+	var shadow;
+	try {
+		shadow = textSpan.attachShadow({mode: 'open'});
+	} catch (e) {
+		return null; // element doesn't support shadow DOM
+	}
+	shadowRoots.set(textSpan, {shadow: shadow});
+	return {shadow: shadow, fresh: true};
+}
+
+// Inject KaTeX CSS into a shadow root (once per shadow root).
+function ensureKatexCSS(shadow) {
+	if (!katexCssUrl) return;
+	if (shadow.querySelector('[data-katex-css]')) return;
+	var link = document.createElement('link');
+	link.rel = 'stylesheet';
+	link.href = katexCssUrl;
+	link.setAttribute('data-katex-css', '1');
+	shadow.appendChild(link);
+}
+
+// Show the light DOM through a <slot> (used when not rendering math,
+// e.g. truncated state). The slot is the ONLY content (except CSS link).
+function showLightDOMSlot(shadow) {
+	// Remove any rendered content
+	Array.from(shadow.childNodes).forEach(function(n) {
+		if (n.nodeType === 1 && n.getAttribute && n.getAttribute('data-katex-css')) return;
+		if (n.tagName && n.tagName.toLowerCase() === 'slot') return;
+		shadow.removeChild(n);
+	});
+	// Ensure slot exists so light DOM content shows through
+	if (!shadow.querySelector('slot')) {
+		shadow.appendChild(document.createElement('slot'));
+	}
+}
+
+// Render KaTeX into the shadow root from a clone of the light DOM.
+// Removes any slot (hides light DOM) and shows rendered content instead.
+function renderIntoShadow(textSpan, shadow, options) {
+	ensureKatexCSS(shadow);
+
+	// Clone the light DOM and render KaTeX in the clone (never touches React DOM)
+	var clone = textSpan.cloneNode(true);
+	try {
+		renderMathInElement(clone, options);
+	} catch (e) {
+		console.warn('LaTeX in Slack: shadow render error', e);
+		showLightDOMSlot(shadow);
+		return false;
+	}
+
+	// Remove slot and old rendered content (keep CSS link)
+	Array.from(shadow.childNodes).forEach(function(n) {
+		if (n.nodeType === 1 && n.getAttribute && n.getAttribute('data-katex-css')) return;
+		shadow.removeChild(n);
+	});
+
+	// Append rendered content into shadow DOM
+	while (clone.firstChild) {
+		shadow.appendChild(clone.firstChild);
+	}
+	return true;
+}
+
 // --- Truncation handling ---
 //
-// KaTeX replaces text nodes with <span> elements. When Slack collapses
-// or expands truncated content it triggers React reconciliation, which
-// fails on KaTeX-modified DOM.
-//
-// Block Kit "See more": delay rendering until expanded (aria-expanded="true").
-//
-// Attachment "Show more/less": render freely when expanded, but undo KaTeX
-// just before "Show less" is clicked so React collapses a clean DOM.
+// "See more" delay: wait 300ms on first encounter to let Slack finish layout
+// and add "See more" buttons before we render, preventing the taller rendered
+// content from triggering truncation on a React-modified DOM.
 
-// Timestamp of when each element was first seen. We wait 300ms before
-// rendering to let Slack finish layout and add "See more" if needed.
-// Using timestamps instead of a boolean flag because MutationObserver
-// triggers processElement many times before the 300ms elapses.
 var firstSeenAt = new WeakMap();
 var RENDER_DELAY_MS = 300;
 
-// Check if a non-expanded Block Kit truncation button exists in the element.
-// Uses querySelectorAll so that in multi-block messages each block is checked
-// independently: a message can have many blocks each with its own "See more"
-// button. The first button (querySelector) may already be expanded (aria-
-// expanded="true"), which would incorrectly allow rendering in still-collapsed
-// sibling blocks. We return true if ANY button is still collapsed.
+// Return true if ANY block_kit truncation button in el is still collapsed.
 function isTruncated(el) {
 	if (!el || !el.querySelectorAll) return false;
 	var btns = el.querySelectorAll('button[data-qa="block_kit_text_truncation"]');
@@ -86,91 +186,101 @@ function isTruncated(el) {
 	return false;
 }
 
-// Surgically undo KaTeX rendering by replacing .katex spans with the
-// original LaTeX text from the embedded <annotation> tag.
-function undoKatexInElement(el) {
-	var displays = el.querySelectorAll('.katex-display');
-	for (var i = displays.length - 1; i >= 0; i--) {
-		var ann = displays[i].querySelector('annotation[encoding="application/x-tex"]');
-		if (ann) {
-			var parent = displays[i].parentNode;
-			if (parent) parent.replaceChild(
-				document.createTextNode('\\[' + ann.textContent + '\\]'), displays[i]);
-		}
-	}
-	var inlines = el.querySelectorAll('.katex');
-	for (var i = inlines.length - 1; i >= 0; i--) {
-		if (inlines[i].closest('.katex-display')) continue;
-		var ann = inlines[i].querySelector('annotation[encoding="application/x-tex"]');
-		if (ann) {
-			var parent = inlines[i].parentNode;
-			if (parent) parent.replaceChild(
-				document.createTextNode('\\(' + ann.textContent + '\\)'), inlines[i]);
-		}
-	}
-}
-
-// Capture "Show less" clicks on attachments before Slack processes them.
-// Undo KaTeX so React collapses a clean DOM, then MutationObserver fires
-// and we re-render the collapsed (truncated) state normally.
-document.addEventListener('click', function(e) {
-	var btn = e.target && e.target.closest &&
-	          e.target.closest('button.c-message_attachment__text_expander');
-	if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
-	var attachmentText = btn.closest('.c-message_attachment__text');
-	if (attachmentText && attachmentText.querySelector('.katex')) {
-		undoKatexInElement(attachmentText);
-		processedContent.delete(attachmentText);
-	}
-}, true); // capture phase: runs before Slack's handler
-
 function processElement(el, options) {
-	var currentContent = el.textContent || "";
+	var currentContent = el.textContent || '';
 
-	if (currentContent.trim().length === 0) {
-		return;
-	}
+	if (currentContent.trim().length === 0) return;
+	if (processedContent.get(el) === currentContent) return;
 
-	if (processedContent.get(el) === currentContent) {
-		return;
-	}
+	var isAttachment = el.classList && el.classList.contains('c-message_attachment__text');
+	var textSpan = isAttachment ? findTextSpan(el) : null;
 
 	if (!latexPattern.test(currentContent)) {
 		processedContent.set(el, currentContent);
+		// If an attachment block had math rendered in its shadow DOM but the
+		// current content (e.g. collapsed truncated text) contains no LaTeX,
+		// clear the shadow so the raw light DOM shows through the slot.
+		if (isAttachment && textSpan && shadowRoots.has(textSpan)) {
+			var existingShadow = shadowRoots.get(textSpan).shadow;
+			if (existingShadow.querySelector('.katex')) {
+				showLightDOMSlot(existingShadow);
+			}
+		}
 		return;
 	}
 
-	// Delay rendering on first encounter to let Slack finish its layout
-	// and add a "See more" button if needed. Without this delay, we
-	// render before the button exists, the content grows taller, Slack
-	// truncates our modified DOM, and "See more" breaks React.
-	// Using a timestamp ensures we actually wait the full delay even
-	// when MutationObserver re-triggers processElement in between.
+	if (isAttachment && textSpan) {
+		// Shadow DOM path: never modify React's light DOM
+		var sr = getShadowRoot(textSpan);
+		if (!sr) {
+			// Shadow DOM not supported — fall through to direct rendering
+		} else {
+			if (sr.fresh) {
+				// Shadow root just created. Show light DOM via slot while we wait
+				// 300ms for Slack to evaluate layout and add "See more" if needed.
+				// Without this delay we might render before the button appears,
+				// growing the content and causing React DOM conflicts.
+				showLightDOMSlot(sr.shadow);
+				shadowRoots.get(textSpan).seenAt = Date.now();
+				firstSeenAt.delete(el); // prevent stale entry leaking into non-attachment path
+				setTimeout(function() { scheduleRender(); }, RENDER_DELAY_MS);
+				return;
+			}
+
+			// Enforce the 300ms delay even after fresh: MutationObserver can
+			// re-enter before the timeout fires with sr.fresh===false. Check the
+			// timestamp stored on the shadow entry to gate the first render.
+			var seenAt = shadowRoots.get(textSpan).seenAt;
+			if (seenAt && (Date.now() - seenAt) < RENDER_DELAY_MS) return;
+			if (seenAt) shadowRoots.get(textSpan).seenAt = null; // clear once passed
+
+			// Shadow exists and delay has passed — respond immediately.
+			// Collapse/re-expand cycles don't need a delay since the button state
+			// is already established.
+			if (isTruncated(el)) {
+				// Truncated: show raw light DOM through slot.
+				// Store current (collapsed) content so the next expand triggers a
+				// fresh render (expanded content will differ → processedContent miss).
+				showLightDOMSlot(sr.shadow);
+				processedContent.set(el, currentContent);
+				return;
+			}
+			// Not truncated: render KaTeX into shadow DOM.
+			if (renderIntoShadow(textSpan, sr.shadow, options)) {
+				processedContent.set(el, currentContent);
+			}
+			return;
+		}
+	}
+
+	// Non-attachment elements: use the 300ms delay to guard against layout races.
 	var now = Date.now();
 	if (!firstSeenAt.has(el)) {
 		firstSeenAt.set(el, now);
 		setTimeout(function() { scheduleRender(); }, RENDER_DELAY_MS);
 		return;
 	}
-	if (now - firstSeenAt.get(el) < RENDER_DELAY_MS) {
-		return; // Still waiting for Slack to finish layout
-	}
+	if (now - firstSeenAt.get(el) < RENDER_DELAY_MS) return;
 	firstSeenAt.delete(el);
 
-	// Skip if this element itself is truncated. Each c-message_attachment__text
-	// block is checked independently so expanding one block renders only that
-	// block, not sibling blocks that are still collapsed.
-	if (isTruncated(el)) {
-		return;
+	// Direct rendering path (non-attachment elements, or shadow DOM unavailable).
+	// Skip c-message_attachment__text children — those are handled via shadow DOM
+	// above and must not be rendered again by a parent container's walk.
+	if (isTruncated(el)) return;
+
+	var directOptions = options;
+	if (!isAttachment) {
+		directOptions = Object.assign({}, options, {
+			ignoredClasses: (options.ignoredClasses || []).concat(['c-message_attachment__text'])
+		});
 	}
 
 	try {
-		renderMathInElement(el, options);
+		renderMathInElement(el, directOptions);
 	} catch (e) {
-		console.warn("LaTeX in Slack: render error", e);
+		console.warn('LaTeX in Slack: render error', e);
 	}
-
-	processedContent.set(el, el.textContent || "");
+	processedContent.set(el, el.textContent || '');
 }
 
 function processAllMessages(options) {
@@ -204,13 +314,11 @@ function startObserving() {
 		setTimeout(startObserving, 100);
 		return;
 	}
-
 	observer.observe(target, {
 		childList: true,
 		subtree: true,
 		characterData: true
 	});
-
 	scheduleRender();
 }
 

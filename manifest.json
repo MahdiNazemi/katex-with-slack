@@ -28,7 +28,7 @@
   "permissions": [
     "storage"
   ],
-  "version": "1.0.7",
+  "version": "1.0.8",
   "icons": {
     "32": "icon32.png",
     "48": "icon48.png",
@@ -36,7 +36,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["fonts/*"],
+      "resources": ["fonts/*", "katex.css"],
       "matches": ["*://*.slack.com/*"]
     }
   ],
