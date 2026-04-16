@@ -71,12 +71,19 @@ refreshOptions();
 var firstSeenAt = new WeakMap();
 var RENDER_DELAY_MS = 300;
 
-// Check if a non-expanded Block Kit truncation button exists in the element
+// Check if a non-expanded Block Kit truncation button exists in the element.
+// Uses querySelectorAll so that in multi-block messages each block is checked
+// independently: a message can have many blocks each with its own "See more"
+// button. The first button (querySelector) may already be expanded (aria-
+// expanded="true"), which would incorrectly allow rendering in still-collapsed
+// sibling blocks. We return true if ANY button is still collapsed.
 function isTruncated(el) {
-	if (!el || !el.querySelector) return false;
-	var btn = el.querySelector('button[data-qa="block_kit_text_truncation"]');
-	if (!btn) return false;
-	return btn.getAttribute('aria-expanded') !== 'true';
+	if (!el || !el.querySelectorAll) return false;
+	var btns = el.querySelectorAll('button[data-qa="block_kit_text_truncation"]');
+	for (var i = 0; i < btns.length; i++) {
+		if (btns[i].getAttribute('aria-expanded') !== 'true') return true;
+	}
+	return false;
 }
 
 // Surgically undo KaTeX rendering by replacing .katex spans with the
@@ -150,17 +157,10 @@ function processElement(el, options) {
 	}
 	firstSeenAt.delete(el);
 
-	// If Slack truncated this message, skip rendering. The user will
-	// click "See more", Slack expands the content (new DOM or changed
-	// content), MutationObserver fires, and we go through the delay
-	// cycle again — this time the button will be gone or expanded.
+	// Skip if this element itself is truncated. Each c-message_attachment__text
+	// block is checked independently so expanding one block renders only that
+	// block, not sibling blocks that are still collapsed.
 	if (isTruncated(el)) {
-		return;
-	}
-
-	// Also check parent message container for truncation
-	var msgContainer = el.closest && el.closest('[data-qa="message_content"]');
-	if (msgContainer && isTruncated(msgContainer)) {
 		return;
 	}
 
