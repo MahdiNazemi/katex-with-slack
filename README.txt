@@ -30,13 +30,11 @@ After loading, open Slack in a new tab (or hard-refresh an existing one).
 Delimiters
 ----------
 
-Default (Style A):
   Inline math:  \( .. \)  or  $$ .. $$
   Display math: \[ .. \]  or  $$$ .. $$$
 
-Alternative (Style B, selectable in extension options):
-  Inline math:  \( .. \)  or  $ .. $
-  Display math: \[ .. \]  or  $$ .. $$  or  $$$ .. $$$
+Single $ is not supported as a delimiter to avoid false positives on
+shell variables, prices and other prose containing dollar signs.
 
 Newlines in formulas: use \newline (double backslash \\ is ignored).
 Shorthands: \N, \R, \Z for \mathbb{N}, \mathbb{R}, \mathbb{Z}.

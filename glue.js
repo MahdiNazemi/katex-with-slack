@@ -14,47 +14,20 @@ var classesToRender = [
 	"c-message_attachment__text"
 ];
 
-var delimitersA = [
+// Supported delimiters. Single $ is intentionally excluded to avoid
+// false positives on shell variables, prices and prose.
+var delimiters = [
 	{left: "$$$", right: "$$$", display: true},
 	{left: "$$",  right: "$$",  display: false},
 	{left: "\\(", right: "\\)", display: false},
 	{left: "\\[", right: "\\]", display: true}
 ];
-var delimitersB = [
-	{left: "$$$", right: "$$$", display: true},
-	{left: "$$",  right: "$$",  display: true},
-	{left: "$",   right: "$",   display: false},
-	{left: "\\(", right: "\\)", display: false},
-	{left: "\\[", right: "\\]", display: true}
-];
+
+var renderOptions = { delimiters: delimiters };
 
 var processedContent = new WeakMap();
-// Require at least $$ (two dollars), \(, or \[ to avoid false positives on
-// bare $ signs in prose (shell variables, prices, units, etc.).
-// Style B single-$ delimiter is intentionally excluded here — use \( \[ instead.
+// Match $$ (two or more dollars), \( or \[ — no single-$ false positives.
 var latexPattern = /\$\$|\\\(|\\\[/;
-
-var cachedOptions = { delimiters: delimitersA };
-
-function refreshOptions() {
-	chrome.storage.sync.get({
-		delimiterstyle: 'A'
-	}, function(items) {
-		if (items.delimiterstyle === 'B') {
-			cachedOptions = { delimiters: delimitersB };
-		} else {
-			cachedOptions = { delimiters: delimitersA };
-		}
-	});
-}
-
-if (chrome.storage.onChanged) {
-	chrome.storage.onChanged.addListener(function() {
-		refreshOptions();
-	});
-}
-
-refreshOptions();
 
 // --- Shadow DOM rendering for Block Kit truncatable blocks ---
 //
@@ -303,7 +276,7 @@ function scheduleRender() {
 	renderScheduled = true;
 	requestAnimationFrame(function() {
 		renderScheduled = false;
-		processAllMessages(cachedOptions);
+		processAllMessages(renderOptions);
 	});
 }
 
@@ -327,7 +300,4 @@ function startObserving() {
 
 startObserving();
 
-window.setInterval(function() {
-	refreshOptions();
-	scheduleRender();
-}, 3000);
+window.setInterval(scheduleRender, 3000);
