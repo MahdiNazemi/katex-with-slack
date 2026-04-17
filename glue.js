@@ -29,7 +29,10 @@ var delimitersB = [
 ];
 
 var processedContent = new WeakMap();
-var latexPattern = /\$|\\[(\[]/;
+// Require at least $$ (two dollars), \(, or \[ to avoid false positives on
+// bare $ signs in prose (shell variables, prices, units, etc.).
+// Style B single-$ delimiter is intentionally excluded here — use \( \[ instead.
+var latexPattern = /\$\$|\\\(|\\\[/;
 
 var cachedOptions = { delimiters: delimitersA };
 
