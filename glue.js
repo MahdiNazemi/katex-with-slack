@@ -89,15 +89,39 @@ function getShadowRoot(textSpan) {
 	return {shadow: shadow, fresh: true};
 }
 
-// Inject KaTeX CSS into a shadow root (once per shadow root).
+// Inject KaTeX CSS and all external Slack stylesheets into a shadow root (once).
+// <link> elements fetch from the browser cache (already loaded for the main document)
+// and are not subject to CORS restrictions for CSS, so cross-origin Slack sheets
+// (a.slack-edge.com) apply correctly inside shadow DOM. The onload callbacks call
+// scheduleRender() so rendering only happens after every sheet is parsed and active.
 function ensureKatexCSS(shadow) {
-	if (!katexCssUrl) return;
 	if (shadow.querySelector('[data-katex-css]')) return;
-	var link = document.createElement('link');
-	link.rel = 'stylesheet';
-	link.href = katexCssUrl;
-	link.setAttribute('data-katex-css', '1');
-	shadow.appendChild(link);
+
+	function injectLink(href) {
+		var link = document.createElement('link');
+		link.rel = 'stylesheet';
+		link.href = href;
+		link.setAttribute('data-katex-css', '1');
+		link.addEventListener('load', function() { scheduleRender(); });
+		shadow.appendChild(link);
+	}
+
+	if (katexCssUrl) injectLink(katexCssUrl);
+
+	Array.from(document.styleSheets).forEach(function(sheet) {
+		if (sheet.href) injectLink(sheet.href);
+	});
+}
+
+// Returns true once every injected stylesheet <link> has been parsed.
+// link.sheet is null until the browser has loaded and parsed the sheet.
+function cssReady(shadow) {
+	var links = shadow.querySelectorAll('link[data-katex-css]');
+	if (!links.length) return true;
+	for (var i = 0; i < links.length; i++) {
+		if (!links[i].sheet) return false;
+	}
+	return true;
 }
 
 // Show the light DOM through a <slot> (used when not rendering math,
@@ -120,8 +144,30 @@ function showLightDOMSlot(shadow) {
 function renderIntoShadow(textSpan, shadow, options) {
 	ensureKatexCSS(shadow);
 
-	// Clone the light DOM and render KaTeX in the clone (never touches React DOM)
+	// Wait until all injected stylesheets are parsed. onload callbacks above
+	// call scheduleRender(), which will re-invoke this function once ready.
+	if (!cssReady(shadow)) return false;
+
 	var clone = textSpan.cloneNode(true);
+
+	// Wrap clone in ancestor divs (display:contents) that mirror the real DOM
+	// hierarchy so that Slack CSS selectors depending on ancestor class names
+	// (e.g. .p-mrkdwn_element .c-emoji img) match inside the shadow root.
+	var ancestors = [];
+	var p = textSpan.parentElement;
+	for (var i = 0; i < 10 && p && p !== document.body; i++) {
+		if (p.className) ancestors.push(p.className);
+		p = p.parentElement;
+	}
+	var container = clone;
+	for (var j = 0; j < ancestors.length; j++) {
+		var wrap = document.createElement('div');
+		wrap.className = ancestors[j];
+		wrap.style.cssText = 'display:contents';
+		wrap.appendChild(container);
+		container = wrap;
+	}
+
 	try {
 		renderMathInElement(clone, options);
 	} catch (e) {
@@ -130,16 +176,13 @@ function renderIntoShadow(textSpan, shadow, options) {
 		return false;
 	}
 
-	// Remove slot and old rendered content (keep CSS link)
+	// Remove slot and old rendered content (keep CSS links)
 	Array.from(shadow.childNodes).forEach(function(n) {
 		if (n.nodeType === 1 && n.getAttribute && n.getAttribute('data-katex-css')) return;
 		shadow.removeChild(n);
 	});
 
-	// Append rendered content into shadow DOM
-	while (clone.firstChild) {
-		shadow.appendChild(clone.firstChild);
-	}
+	shadow.appendChild(container);
 	return true;
 }
 
