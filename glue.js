@@ -83,7 +83,11 @@ function getShadowRoot(textSpan) {
 	try {
 		shadow = textSpan.attachShadow({mode: 'open'});
 	} catch (e) {
-		return null; // element doesn't support shadow DOM
+		// attachShadow throws when a shadow root already exists (e.g. extension
+		// reloaded mid-session). Reclaim the existing open root rather than
+		// falling through to direct DOM rendering, which triggers React errors.
+		shadow = textSpan.shadowRoot;
+		if (!shadow) return null;
 	}
 	shadowRoots.set(textSpan, {shadow: shadow});
 	return {shadow: shadow, fresh: true};

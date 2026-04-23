@@ -21,7 +21,7 @@
   "short_name": "latex-slack",
   "description": "Render LaTeX in Slack chat.",
   "author": "Mahdi Nazemi",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "icons": {
     "32": "icon32.png",
     "48": "icon48.png",
