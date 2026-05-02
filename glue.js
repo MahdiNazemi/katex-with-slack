@@ -154,6 +154,17 @@ function renderIntoShadow(textSpan, shadow, options) {
 
 	var clone = textSpan.cloneNode(true);
 
+	// Slack renders newlines inside Block Kit plain_text as <br> elements.
+	// KaTeX's auto-render concatenates only sibling text nodes, so multi-line
+	// \[ ... \] split as text/<br>/text/<br>/text never matches as one
+	// delimiter pair. Replace each <br> with a "\n" text node and normalize so
+	// the math reaches KaTeX as one contiguous text node. white-space:pre-wrap
+	// on the wrapper below keeps the \n visible for surrounding prose.
+	clone.querySelectorAll('br').forEach(function(br) {
+		br.parentNode.replaceChild(document.createTextNode('\n'), br);
+	});
+	clone.normalize();
+
 	// Wrap clone in ancestor divs (display:contents) that mirror the real DOM
 	// hierarchy so that Slack CSS selectors depending on ancestor class names
 	// (e.g. .p-mrkdwn_element .c-emoji img) match inside the shadow root.
@@ -171,6 +182,7 @@ function renderIntoShadow(textSpan, shadow, options) {
 		wrap.appendChild(container);
 		container = wrap;
 	}
+	(container === clone ? clone : container).style.whiteSpace = 'pre-wrap';
 
 	try {
 		renderMathInElement(clone, options);
