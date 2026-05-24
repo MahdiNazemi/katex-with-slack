@@ -212,11 +212,17 @@ var firstSeenAt = new WeakMap();
 var RENDER_DELAY_MS = 300;
 
 // Return true if ANY block_kit truncation button in el is still collapsed.
+// aria-expanded may be absent on the button; the label is the fallback.
+var TRUNCATED_LABELS = ['Show more'];
 function isTruncated(el) {
 	if (!el || !el.querySelectorAll) return false;
 	var btns = el.querySelectorAll('button[data-qa="block_kit_text_truncation"]');
 	for (var i = 0; i < btns.length; i++) {
-		if (btns[i].getAttribute('aria-expanded') !== 'true') return true;
+		var expanded = btns[i].getAttribute('aria-expanded');
+		if (expanded === 'true') continue;
+		if (expanded === 'false') return true;
+		var text = (btns[i].textContent || '').trim();
+		if (TRUNCATED_LABELS.indexOf(text) !== -1) return true;
 	}
 	return false;
 }
